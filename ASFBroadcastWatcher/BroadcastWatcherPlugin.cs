@@ -25,7 +25,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     public Version Version => typeof(BroadcastWatcherPlugin).Assembly.GetName().Version ?? new Version(1, 0, 0, 0);
 
     // Tracks active watch sessions per bot: botName -> WatchSession
-    private static readonly ConcurrentDictionary<string, WatchSession> ActiveSessions = new(StringComparer.OrdinalIgnoreCase);
+    internal static readonly ConcurrentDictionary<string, WatchSession> ActiveSessions = new(StringComparer.OrdinalIgnoreCase);
 
     public Task OnLoaded() {
         ASF.ArchiLogger.LogGenericInfo($"{Name} {Version} loaded. Commands: BCAST <Bots> <BroadcastUrl> | BCASTSTOP <Bots> | BCASTLIST");
