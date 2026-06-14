@@ -232,53 +232,37 @@ internal sealed class WatchSession {
     internal void Start() => _ = HeartbeatLoopAsync(_cts.Token);
     internal async Task StopAsync() => await _cts.CancelAsync().ConfigureAwait(false);
 
-    private async Task HeartbeatLoopAsync(CancellationToken ct) {
-        _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat loop started for broadcaster {BroadcasterSteamId}.");
-
+    // Inside your BroadcastWatcher class
+private async Task HeartbeatLoop(Bot bot, ulong broadcasterSteamId, string broadcastId, string viewerToken, CancellationToken ct) {
+    while (!ct.IsCancellationRequested) {
         try {
-            while (!ct.IsCancellationRequested) {
-                await Task.Delay(TimeSpan.FromSeconds(HeartbeatIntervalSeconds), ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested) break;
+            // Send the heartbeat
+            var response = await bot.ArchiWebHandler.UrlGetToJsonObject<HeartbeatResponse>(
+                new Uri($"https://steamcommunity.com/broadcast/heartbeat/?broadcastid={broadcastId}&viewertoken={viewerToken}"),
+                referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
+            ).ConfigureAwait(false);
 
-                HeartbeatResponse? heartbeat = await BroadcastWatcherPlugin.SendHeartbeatAsync(
-                    _bot, BroadcasterSteamId, _sessionId, _token
-                ).ConfigureAwait(false);
-
-                if (heartbeat == null || heartbeat.Result != 1) {
-                    // Heartbeat failed — try to re-register before giving up
-                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (result={heartbeat?.Result}), attempting re-register...");
-
-                    BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdAsync(
-                        _bot, BroadcasterSteamId, _token, _sessionId
-                    ).ConfigureAwait(false);
-
-                    if (mpd != null && mpd.Success == 1 && !string.IsNullOrEmpty(mpd.BroadcastId) && mpd.BroadcastId != "0") {
-                        _sessionId = mpd.BroadcastId;
-                        _token = mpd.ViewerToken;
-                        _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Re-registered. New sessionid={_sessionId}");
-                        continue;
-                    }
-
-                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Broadcast ended or unavailable. Stopping.");
-                    BroadcastWatcherPlugin.ActiveSessions.TryRemove(_bot.BotName, out _);
-                    break;
+            // Check if heartbeat failed or returned an error
+            if (response == null || !response.Success) {
+                bot.ArchiLogger.LogGenericError($"[BroadcastWatcher] Heartbeat failed for {bot.BotName}. Attempting to refresh session...");
+                
+                // Attempt to re-fetch session details
+                var newSession = await GetBroadcastMpdAsync(bot, broadcasterSteamId).ConfigureAwait(false);
+                if (newSession != null) {
+                    broadcastId = newSession.BroadcastId;
+                    viewerToken = newSession.ViewerToken;
+                    continue; // Continue loop with new credentials
+                } else {
+                    bot.ArchiLogger.LogGenericError($"[BroadcastWatcher] Could not refresh session for {bot.BotName}. Stopping.");
+                    break; 
                 }
-
-                // Update token if Steam gave us a new one
-                if (!string.IsNullOrEmpty(heartbeat.Token) && heartbeat.Token != "0") {
-                    _token = heartbeat.Token;
-                }
-
-                _bot.ArchiLogger.LogGenericDebug($"[BroadcastWatcher] {_bot.BotName}: Heartbeat OK.");
             }
-        } catch (OperationCanceledException) {
-            // Normal stop via BCASTSTOP
-        } catch (Exception ex) {
-            _bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {_bot.BotName}: Unexpected error in heartbeat loop.");
-            BroadcastWatcherPlugin.ActiveSessions.TryRemove(_bot.BotName, out _);
+        } catch (Exception e) {
+            bot.ArchiLogger.LogGenericException(e);
+            break;
         }
 
-        _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat loop stopped.");
+        await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
     }
 }
 
