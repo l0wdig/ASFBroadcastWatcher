@@ -143,9 +143,21 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
                 return $"❌ {bot.BotName}: Failed to load broadcast page.";
             }
 
-            // Skip getbroadcastmpd — start heartbeating with broadcastid=0 and viewertoken=0
-            // Steam will assign a real viewertoken on the first heartbeat
-            WatchSession session = new(bot, broadcasterSteamId, "0", "0");
+            // FIX: Call getbroadcastmpd first to get the real broadcastid and viewertoken
+            // Without these, the heartbeat endpoint returns an error JSON that can't be parsed
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Fetching broadcast MPD for {broadcasterSteamId}...");
+            BroadcastMpdResponse? mpd = await GetBroadcastMpdAsync(bot, broadcasterSteamId).ConfigureAwait(false);
+
+            if (mpd == null || mpd.Success == 0) {
+                return $"❌ {bot.BotName}: Could not get broadcast session from Steam (getbroadcastmpd failed). Is the broadcast actually live?";
+            }
+
+            string broadcastId = mpd.BroadcastId;
+            string viewerToken = mpd.ViewerToken;
+
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Got broadcastid={broadcastId} viewertoken={viewerToken}");
+
+            WatchSession session = new(bot, broadcasterSteamId, broadcastId, viewerToken);
             ActiveSessions[bot.BotName] = session;
             session.Start();
 
@@ -155,7 +167,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         }
     }
 
-    private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
+    internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new("https://steamcommunity.com/broadcast/getbroadcastmpd/");
 
         Dictionary<string, string> data = new() {
@@ -179,7 +191,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         return response?.Content;
     }
 
-    internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
+    internal static async Task<HeartbeatResponse?> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
         Uri heartbeatUri = new("https://steamcommunity.com/broadcast/heartbeat/");
 
         Dictionary<string, string> data = new() {
@@ -197,11 +209,11 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
 
         if (response?.Content == null) {
             bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat returned null (HTTP status may indicate error)");
-            return false;
+            return null;
         }
 
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat success={response.Content.Success}");
-        return response.Content.Success == 1;
+        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat success={response.Content.Success} viewertoken={response.Content.ViewerToken}");
+        return response.Content;
     }
 
     private static string? ExtractSteamIdFromUrl(string url) {
@@ -229,8 +241,9 @@ internal sealed class WatchSession {
     internal readonly DateTime StartedAt;
 
     private readonly Bot _bot;
-    private readonly string _broadcastId;
-    private readonly string _viewerToken;
+    // FIX: these must be non-readonly so Steam's updated viewertoken can be saved each heartbeat
+    private string _broadcastId;
+    private string _viewerToken;
     private readonly CancellationTokenSource _cts = new();
 
     private const int HeartbeatIntervalSeconds = 60;
@@ -263,13 +276,17 @@ internal sealed class WatchSession {
                     break;
                 }
 
-                bool stillLive = await BroadcastWatcherPlugin.SendHeartbeatAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
+                HeartbeatResponse? heartbeat = await BroadcastWatcherPlugin.SendHeartbeatAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
 
-                if (!stillLive) {
+                if (heartbeat == null || heartbeat.Success != 1) {
                     _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Broadcast by {BroadcasterSteamId} has ended or become unavailable. Stopping.");
-                    // Remove ourselves from the active sessions dictionary
                     BroadcastWatcherPlugin.ActiveSessions.TryRemove(_bot.BotName, out _);
                     break;
+                }
+
+                // FIX: Steam may return a refreshed viewertoken — save it for the next heartbeat
+                if (!string.IsNullOrEmpty(heartbeat.ViewerToken) && heartbeat.ViewerToken != "0") {
+                    _viewerToken = heartbeat.ViewerToken;
                 }
 
                 _bot.ArchiLogger.LogGenericDebug($"[BroadcastWatcher] {_bot.BotName}: Heartbeat OK (broadcaster={BroadcasterSteamId}).");
@@ -306,4 +323,8 @@ internal sealed class BroadcastMpdResponse {
 internal sealed class HeartbeatResponse {
     [JsonPropertyName("success")]
     public int Success { get; init; }
+
+    // FIX: capture the refreshed viewertoken Steam sometimes returns in the heartbeat response
+    [JsonPropertyName("viewertoken")]
+    public string ViewerToken { get; init; } = "0";
 }
