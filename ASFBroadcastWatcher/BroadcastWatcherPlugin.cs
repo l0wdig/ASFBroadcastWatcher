@@ -144,7 +144,8 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
 
         // cellid tells Steam which CDN cell (region) we're in — without it the session
         // is considered invalid almost immediately, causing "broadcast offline" errors.
-        uint cellId = bot.SteamClient?.CellID ?? 0;
+        // ASF exposes this via the static ASF.GlobalDatabase; fall back to 0 if unavailable.
+        uint cellId = ASF.GlobalDatabase?.CellID ?? 0;
 
         Dictionary<string, string> data = new() {
             { "steamid", broadcasterSteamId },
