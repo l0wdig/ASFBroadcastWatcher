@@ -214,11 +214,10 @@ internal sealed class WatchSession {
     internal readonly DateTime StartedAt;
 
     private readonly Bot _bot;
-    private string _sessionId;   // = broadcastid from getbroadcastmpd
-    private string _token;       // = viewertoken from getbroadcastmpd / heartbeat response
+    private string _sessionId;
+    private string _token;
     private readonly CancellationTokenSource _cts = new();
 
-    // Steam expects heartbeats roughly every 30 seconds
     private const int HeartbeatIntervalSeconds = 30;
 
     internal WatchSession(Bot bot, string broadcasterSteamId, string sessionId, string token) {
@@ -230,39 +229,41 @@ internal sealed class WatchSession {
     }
 
     internal void Start() => _ = HeartbeatLoopAsync(_cts.Token);
-    internal async Task StopAsync() => await _cts.CancelAsync().ConfigureAwait(false);
 
-    // Inside your BroadcastWatcher class
-private async Task HeartbeatLoop(Bot bot, ulong broadcasterSteamId, string broadcastId, string viewerToken, CancellationToken ct) {
-    while (!ct.IsCancellationRequested) {
-        try {
-            // Send the heartbeat
-            var response = await bot.ArchiWebHandler.UrlGetToJsonObject<HeartbeatResponse>(
-                new Uri($"https://steamcommunity.com/broadcast/heartbeat/?broadcastid={broadcastId}&viewertoken={viewerToken}"),
-                referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
-            ).ConfigureAwait(false);
+    internal Task StopAsync() {
+        _cts.Cancel();
+        return Task.CompletedTask;
+    }
 
-            // Check if heartbeat failed or returned an error
-            if (response == null || !response.Success) {
-                bot.ArchiLogger.LogGenericError($"[BroadcastWatcher] Heartbeat failed for {bot.BotName}. Attempting to refresh session...");
-                
-                // Attempt to re-fetch session details
-                var newSession = await GetBroadcastMpdAsync(bot, broadcasterSteamId).ConfigureAwait(false);
-                if (newSession != null) {
-                    broadcastId = newSession.BroadcastId;
-                    viewerToken = newSession.ViewerToken;
-                    continue; // Continue loop with new credentials
-                } else {
-                    bot.ArchiLogger.LogGenericError($"[BroadcastWatcher] Could not refresh session for {bot.BotName}. Stopping.");
-                    break; 
+    private async Task HeartbeatLoopAsync(CancellationToken ct) {
+        while (!ct.IsCancellationRequested) {
+            try {
+                HeartbeatResponse? response =
+                    await BroadcastWatcherPlugin.SendHeartbeatAsync(
+                        _bot,
+                        BroadcasterSteamId,
+                        _sessionId,
+                        _token
+                    ).ConfigureAwait(false);
+
+                if (response?.Result != 1) {
+                    _bot.ArchiLogger.LogGenericWarning(
+                        $"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed."
+                    );
                 }
-            }
-        } catch (Exception e) {
-            bot.ArchiLogger.LogGenericException(e);
-            break;
-        }
 
-        await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(response?.Token)) {
+                    _token = response.Token;
+                }
+            } catch (Exception e) {
+                _bot.ArchiLogger.LogGenericException(e);
+            }
+
+            await Task.Delay(
+                TimeSpan.FromSeconds(HeartbeatIntervalSeconds),
+                ct
+            ).ConfigureAwait(false);
+        }
     }
 }
 
