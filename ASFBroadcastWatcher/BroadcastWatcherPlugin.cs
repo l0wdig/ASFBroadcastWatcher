@@ -182,29 +182,21 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
         Uri heartbeatUri = new("https://steamcommunity.com/broadcast/heartbeat/");
 
-        // Get sessionid from bot's Steam community session
-        string? sessionId = await bot.ArchiWebHandler.GetAbsoluteSessionID().ConfigureAwait(false);
-
         Dictionary<string, string> data = new() {
             { "steamid", broadcasterSteamId },
             { "broadcastid", broadcastId },
             { "viewertoken", viewerToken },
         };
 
-        if (!string.IsNullOrEmpty(sessionId)) {
-            data["sessionid"] = sessionId;
-        }
-
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Sending heartbeat sessionid={sessionId} steamid={broadcasterSteamId} broadcastid={broadcastId}");
-
         ObjectResponse<HeartbeatResponse>? response = await bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<HeartbeatResponse>(
             heartbeatUri,
             data: data,
-            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
+            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}"),
+            requestOptions: ArchiSteamFarm.Web.WebBrowser.ERequestOptions.ReturnClientErrors | ArchiSteamFarm.Web.WebBrowser.ERequestOptions.ReturnServerErrors
         ).ConfigureAwait(false);
 
         if (response?.Content == null) {
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat returned null");
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat returned null (HTTP status may indicate error)");
             return false;
         }
 
