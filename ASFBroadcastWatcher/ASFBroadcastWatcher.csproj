@@ -8,19 +8,11 @@
     <Version>1.0.0.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
-    <Optimize>true</Optimize>
   </PropertyGroup>
 
   <ItemGroup>
-    <!--
-      Reference the ArchiSteamFarm assembly.
-      When building, set the ASFDirectory property to point to your ASF folder:
-        dotnet publish -c Release /p:ASFDirectory="C:\path\to\ASF"
-      Or replace the HintPath below with the actual path to ArchiSteamFarm.dll.
-    -->
     <Reference Include="ArchiSteamFarm">
-      <HintPath>$(ASFDirectory)\ArchiSteamFarm.dll</HintPath>
+      <HintPath>$(ASFDirectory)/ArchiSteamFarm.dll</HintPath>
       <ExcludeAssets>all</ExcludeAssets>
       <Private>false</Private>
     </Reference>
