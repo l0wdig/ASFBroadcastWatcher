@@ -169,12 +169,19 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new($"https://steamcommunity.com/broadcast/getbroadcastmpd/?steamid={broadcasterSteamId}&broadcastid={broadcastId}&viewertoken={viewerToken}");
 
-        ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<BroadcastMpdResponse>(
+        ObjectResponse<JsonElement>? rawResponse = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<JsonElement>(
             mpdUri,
             referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
         ).ConfigureAwait(false);
 
-        return response?.Content;
+        if (rawResponse?.Content == null) {
+            return null;
+        }
+
+        // Log the raw response so we can see what Steam returns
+        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd raw response: {rawResponse.Content}");
+
+        return rawResponse.Content.Deserialize<BroadcastMpdResponse>();
     }
 
     internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
