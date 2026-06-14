@@ -167,15 +167,24 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     }
 
     private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
-        Uri mpdUri = new($"https://steamcommunity.com/broadcast/getbroadcastmpd/?steamid={broadcasterSteamId}&broadcastid={broadcastId}&viewertoken={viewerToken}");
+        Uri mpdUri = new("https://steamcommunity.com/broadcast/getbroadcastmpd/");
 
-        ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<BroadcastMpdResponse>(
+        Dictionary<string, string> data = new() {
+            { "steamid", broadcasterSteamId },
+            { "broadcastid", broadcastId },
+            { "viewertoken", viewerToken },
+        };
+
+        ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<BroadcastMpdResponse>(
             mpdUri,
+            data: data,
             referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
         ).ConfigureAwait(false);
 
         if (response?.Content != null) {
             bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd success={response.Content.Success} broadcastid={response.Content.BroadcastId} viewertoken={response.Content.ViewerToken}");
+        } else {
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd returned null for {broadcasterSteamId}");
         }
 
         return response?.Content;
