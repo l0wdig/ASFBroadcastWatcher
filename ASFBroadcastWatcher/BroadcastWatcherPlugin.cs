@@ -169,25 +169,16 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new($"https://steamcommunity.com/broadcast/getbroadcastmpd/?steamid={broadcasterSteamId}&broadcastid={broadcastId}&viewertoken={viewerToken}");
 
-        using HttpClient httpClient = new();
-        httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        httpClient.DefaultRequestHeaders.Add("Referer", $"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
+        ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<BroadcastMpdResponse>(
+            mpdUri,
+            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
+        ).ConfigureAwait(false);
 
-        // Copy session cookies from bot's web handler
-        string? sessionId = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"))["sessionid"]?.Value;
-        string? steamLogin = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"))["steamLoginSecure"]?.Value;
-
-        if (sessionId != null) httpClient.DefaultRequestHeaders.Add("Cookie", $"sessionid={sessionId}; steamLoginSecure={steamLogin}");
-
-        string rawJson = await httpClient.GetStringAsync(mpdUri).ConfigureAwait(false);
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd raw response: {rawJson}");
-
-        try {
-            return JsonSerializer.Deserialize<BroadcastMpdResponse>(rawJson);
-        } catch (Exception ex) {
-            bot.ArchiLogger.LogGenericException(ex, "[BroadcastWatcher] Failed to deserialize getbroadcastmpd response");
-            return null;
+        if (response?.Content != null) {
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd success={response.Content.Success} broadcastid={response.Content.BroadcastId} viewertoken={response.Content.ViewerToken}");
         }
+
+        return response?.Content;
     }
 
     internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
