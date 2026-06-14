@@ -29,7 +29,7 @@ jobs:
 
       - name: Build plugin
         run: |
-          dotnet publish ASFBroadcastWatcher/ASFBroadcastWatcher/ASFBroadcastWatcher.csproj \
+          dotnet publish ASFBroadcastWatcher/ASFBroadcastWatcher.csproj \
             -c Release \
             -o out \
             /p:ASFDirectory=/tmp/ASF
