@@ -143,47 +143,15 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
                 return $"❌ {bot.BotName}: Failed to load broadcast page.";
             }
 
-            // Try to extract appid from the broadcast page HTML
-            // Steam embeds it in a data attribute or JavaScript variable on the page
-            string? appId = null;
-            var playerNode = watchPage.Content?.DocumentNode.SelectSingleNode("//*[@data-appid]");
-            if (playerNode != null) {
-                appId = playerNode.GetAttributeValue("data-appid", null);
-            }
-
-            // Fallback: scan all nodes for data-appid
-            if (string.IsNullOrEmpty(appId)) {
-                var allNodes = watchPage.Content?.DocumentNode.SelectNodes("//*[@data-appid]");
-                if (allNodes != null) {
-                    foreach (var node in allNodes) {
-                        string? val = node.GetAttributeValue("data-appid", null);
-                        if (!string.IsNullOrEmpty(val)) {
-                            appId = val;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Default to "0" if we couldn't find it — Steam will still usually work
-            appId ??= "0";
-
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Using appid={appId} for broadcaster {broadcasterSteamId}");
+            // Use appid=0 — Steam accepts this and resolves the correct app from the broadcast session
+            const string appId = "0";
 
             // Call getbroadcastmpd to get the real broadcastid and viewertoken
             bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Fetching broadcast MPD for {broadcasterSteamId}...");
             BroadcastMpdResponse? mpd = await GetBroadcastMpdAsync(bot, broadcasterSteamId, appId).ConfigureAwait(false);
 
             if (mpd == null || mpd.Success == 0) {
-                // Retry once with appid=0 in case our extracted appid was wrong
-                if (appId != "0") {
-                    bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: MPD failed with appid={appId}, retrying with appid=0...");
-                    mpd = await GetBroadcastMpdAsync(bot, broadcasterSteamId, "0").ConfigureAwait(false);
-                }
-
-                if (mpd == null || mpd.Success == 0) {
-                    return $"❌ {bot.BotName}: Could not get broadcast session from Steam (getbroadcastmpd failed). Is the broadcast actually live?";
-                }
+                return $"❌ {bot.BotName}: Could not get broadcast session from Steam (getbroadcastmpd failed). Is the broadcast actually live?";
             }
 
             string broadcastId = mpd.BroadcastId;
