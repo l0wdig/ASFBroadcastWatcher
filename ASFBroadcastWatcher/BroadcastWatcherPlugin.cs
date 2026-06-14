@@ -292,4 +292,4 @@ internal sealed class HeartbeatResponse {
     // And "token" not "viewertoken"
     [JsonPropertyName("token")]
     public string Token { get; init; } = "0";
-}}
+}
