@@ -22,14 +22,16 @@ jobs:
         run: |
           ASF_VERSION=$(curl -s https://api.github.com/repos/JustArchiNET/ArchiSteamFarm/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
           echo "ASF_VERSION=$ASF_VERSION" >> $GITHUB_ENV
-          curl -L "https://github.com/JustArchiNET/ArchiSteamFarm/releases/download/${ASF_VERSION}/ASF-linux-x64.zip" -o /tmp/ASF.zip
+          curl -L "https://github.com/JustArchiNET/ArchiSteamFarm/releases/download/${ASF_VERSION}/ASF-generic.zip" -o /tmp/ASF.zip
           mkdir -p /tmp/ASF
           unzip -q /tmp/ASF.zip -d /tmp/ASF
+          echo "Files in /tmp/ASF:"
           ls /tmp/ASF/
 
       - name: Copy ASF dll next to csproj
         run: |
-          cp /tmp/ASF/ArchiSteamFarm.dll ASFBroadcastWatcher/ASFBroadcastWatcher/
+          find /tmp/ASF -name "ArchiSteamFarm.dll" | head -1
+          cp $(find /tmp/ASF -name "ArchiSteamFarm.dll" | head -1) ASFBroadcastWatcher/ASFBroadcastWatcher/
 
       - name: Build plugin
         run: |
