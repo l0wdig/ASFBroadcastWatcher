@@ -169,7 +169,8 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new($"https://steamcommunity.com/broadcast/getbroadcastmpd/?steamid={broadcasterSteamId}&broadcastid={broadcastId}&viewertoken={viewerToken}");
 
-        ObjectResponse<JsonElement>? rawResponse = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<JsonElement>(
+        // Get raw string response first so we can log it for debugging
+        ArchiSteamFarm.Web.Responses.StringResponse? rawResponse = await bot.ArchiWebHandler.WebBrowser.UrlGetToString(
             mpdUri,
             referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
         ).ConfigureAwait(false);
@@ -178,10 +179,14 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
             return null;
         }
 
-        // Log the raw response so we can see what Steam returns
         bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd raw response: {rawResponse.Content}");
 
-        return rawResponse.Content.Deserialize<BroadcastMpdResponse>();
+        try {
+            return JsonSerializer.Deserialize<BroadcastMpdResponse>(rawResponse.Content);
+        } catch (Exception ex) {
+            bot.ArchiLogger.LogGenericException(ex, "[BroadcastWatcher] Failed to deserialize getbroadcastmpd response");
+            return null;
+        }
     }
 
     internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
