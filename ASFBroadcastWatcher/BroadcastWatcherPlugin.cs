@@ -169,20 +169,21 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     private static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new($"https://steamcommunity.com/broadcast/getbroadcastmpd/?steamid={broadcasterSteamId}&broadcastid={broadcastId}&viewertoken={viewerToken}");
 
-        // Get raw string response first so we can log it for debugging
-        ArchiSteamFarm.Web.Responses.StringResponse? rawResponse = await bot.ArchiWebHandler.WebBrowser.UrlGetToString(
-            mpdUri,
-            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
-        ).ConfigureAwait(false);
+        using HttpClient httpClient = new();
+        httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        httpClient.DefaultRequestHeaders.Add("Referer", $"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
 
-        if (rawResponse?.Content == null) {
-            return null;
-        }
+        // Copy session cookies from bot's web handler
+        string? sessionId = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"))["sessionid"]?.Value;
+        string? steamLogin = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"))["steamLoginSecure"]?.Value;
 
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd raw response: {rawResponse.Content}");
+        if (sessionId != null) httpClient.DefaultRequestHeaders.Add("Cookie", $"sessionid={sessionId}; steamLoginSecure={steamLogin}");
+
+        string rawJson = await httpClient.GetStringAsync(mpdUri).ConfigureAwait(false);
+        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd raw response: {rawJson}");
 
         try {
-            return JsonSerializer.Deserialize<BroadcastMpdResponse>(rawResponse.Content);
+            return JsonSerializer.Deserialize<BroadcastMpdResponse>(rawJson);
         } catch (Exception ex) {
             bot.ArchiLogger.LogGenericException(ex, "[BroadcastWatcher] Failed to deserialize getbroadcastmpd response");
             return null;
