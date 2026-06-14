@@ -287,9 +287,9 @@ internal sealed class BroadcastMpdResponse {
 internal sealed class HeartbeatResponse {
     // The official ISteamBroadcast/ViewerHeartbeat/v1 returns "result" not "success"
     [JsonPropertyName("result")]
-    public int Result { get; init; 
+    public int Result { get; init; }
 
     // And "token" not "viewertoken"
     [JsonPropertyName("token")]
     public string Token { get; init; } = "0";
-}
+}}
