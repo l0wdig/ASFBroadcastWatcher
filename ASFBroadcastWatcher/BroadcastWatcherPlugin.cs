@@ -151,7 +151,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
                 return $"❌ {bot.BotName}: Failed to get broadcast info. Broadcaster may be offline.";
             }
 
-            if (mpd.Success != "ready") {
+            if (mpd.Success != 1) {
                 return $"❌ {bot.BotName}: Broadcast not ready (status: {mpd.Success}). Broadcaster may be offline or the broadcast is private.";
             }
 
@@ -199,7 +199,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         }
 
         // "success" values: "ready" = still live, "waiting" = buffering/starting, anything else = ended
-        return response.Content.Success is "ready" or "waiting";
+        return response.Content.Success == 1;
     }
 
     private static string? ExtractSteamIdFromUrl(string url) {
@@ -289,7 +289,7 @@ internal sealed class WatchSession {
 
 internal sealed class BroadcastMpdResponse {
     [JsonPropertyName("success")]
-    public string Success { get; init; } = string.Empty;
+    public int Success { get; init; }
 
     [JsonPropertyName("broadcastid")]
     public string BroadcastId { get; init; } = "0";
@@ -303,5 +303,5 @@ internal sealed class BroadcastMpdResponse {
 
 internal sealed class HeartbeatResponse {
     [JsonPropertyName("success")]
-    public string Success { get; init; } = string.Empty;
+    public int Success { get; init; }
 }
