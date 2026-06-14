@@ -1,0 +1,75 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Download latest ASF release (for ArchiSteamFarm.dll reference)
+        run: |
+          ASF_VERSION=$(curl -s https://api.github.com/repos/JustArchiNET/ArchiSteamFarm/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+          echo "Building against ASF version: $ASF_VERSION"
+          echo "ASF_VERSION=$ASF_VERSION" >> $GITHUB_ENV
+          curl -L "https://github.com/JustArchiNET/ArchiSteamFarm/releases/download/${ASF_VERSION}/ASF-linux-x64.zip" -o /tmp/ASF.zip
+          mkdir -p /tmp/ASF
+          unzip -q /tmp/ASF.zip -d /tmp/ASF
+
+      - name: Build plugin
+        run: |
+          dotnet publish ASFBroadcastWatcher/ASFBroadcastWatcher/ASFBroadcastWatcher.csproj \
+            -c Release \
+            -o out \
+            /p:ASFDirectory=/tmp/ASF
+
+      - name: Remove ASF DLL from output
+        run: |
+          rm -f out/ArchiSteamFarm.dll
+          rm -f out/ArchiSteamFarm.pdb
+          ls -la out/
+
+      - name: Create plugin zip
+        run: |
+          mkdir -p release/ASFBroadcastWatcher
+          for f in out/*.dll; do
+            fname=$(basename "$f")
+            if [ "$fname" != "ArchiSteamFarm.dll" ]; then
+              cp "$f" release/ASFBroadcastWatcher/
+            fi
+          done
+          cd release
+          zip -r ../ASFBroadcastWatcher.zip ASFBroadcastWatcher/
+
+      - name: Get short commit SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ env.SHORT_SHA }}"
+          name: "ASFBroadcastWatcher (built against ASF ${{ env.ASF_VERSION }})"
+          body: |
+            ## Installation
+            1. Download `ASFBroadcastWatcher.zip`
+            2. Extract into your `ASF/plugins/` folder
+            3. Restart ASF
+
+            ## Commands
+            - `!BCAST <Bots> <URL>` — start watching a broadcast
+            - `!BCASTSTOP <Bots>` — stop watching
+            - `!BCASTLIST` — list active sessions
+          files: ASFBroadcastWatcher.zip
+          draft: false
+          prerelease: false
