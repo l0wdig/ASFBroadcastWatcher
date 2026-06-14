@@ -141,19 +141,13 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     // Calls the community endpoint to register as a viewer and get a session token
     internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new("https://steamcommunity.com/broadcast/getbroadcastmpd/");
-
-        // cellid tells Steam which CDN cell (region) we're in — without it the session
-        // is considered invalid almost immediately, causing "broadcast offline" errors.
-        // ASF exposes this via the static ASF.GlobalDatabase; fall back to 0 if unavailable.
-        uint cellId = ASF.GlobalDatabase?.CellID ?? 0;
-
         Dictionary<string, string> data = new() {
             { "steamid", broadcasterSteamId },
             { "broadcastid", broadcastId },
             { "viewertoken", viewerToken },
             { "appid", "0" },
             { "playerid", "0" },
-            { "cellid", cellId.ToString() },
+            { "cellid", "0" },
             { "langpref", "english" },
             { "maxresolution", "1080" },
         };
