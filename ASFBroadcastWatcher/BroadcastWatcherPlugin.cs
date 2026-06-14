@@ -129,8 +129,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         }
 
         try {
-            // Step 1: GET the broadcast watch page to obtain a sessionid cookie
-            // We use the bot's own ArchiWebHandler which already has authenticated Steam Community cookies
+            // Load the broadcast page to set session cookies
             Uri watchUri = new(originalUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
                 ? originalUrl
                 : "https://steamcommunity.com/broadcast/watch/" + broadcasterSteamId);
@@ -141,26 +140,16 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
             ).ConfigureAwait(false);
 
             if (watchPage == null) {
-                return $"❌ {bot.BotName}: Failed to load broadcast page. Is the bot's session valid?";
+                return $"❌ {bot.BotName}: Failed to load broadcast page.";
             }
 
-            // Step 2: Call getbroadcastmpd to register as a viewer and get broadcastid + viewertoken
-            BroadcastMpdResponse? mpd = await GetBroadcastMpdAsync(bot, broadcasterSteamId).ConfigureAwait(false);
-
-            if (mpd == null) {
-                return $"❌ {bot.BotName}: Failed to get broadcast info. Broadcaster may be offline.";
-            }
-
-            if (mpd.Success != 1) {
-                return $"❌ {bot.BotName}: Broadcast not ready (status: {mpd.Success}). Broadcaster may be offline or the broadcast is private.";
-            }
-
-            // Step 3: Create a WatchSession that heartbeats every 60 seconds
-            WatchSession session = new(bot, broadcasterSteamId, mpd.BroadcastId, mpd.ViewerToken);
+            // Skip getbroadcastmpd — start heartbeating with broadcastid=0 and viewertoken=0
+            // Steam will assign a real viewertoken on the first heartbeat
+            WatchSession session = new(bot, broadcasterSteamId, "0", "0");
             ActiveSessions[bot.BotName] = session;
             session.Start();
 
-            return $"✅ {bot.BotName}: Now watching broadcast by {broadcasterSteamId} (broadcastId={mpd.BroadcastId}). Heartbeating every 60s. Use BCASTSTOP {bot.BotName} to stop.";
+            return $"✅ {bot.BotName}: Now watching broadcast by {broadcasterSteamId}. Heartbeating every 60s. Use BCASTSTOP {bot.BotName} to stop.";
         } catch (Exception ex) {
             return $"❌ {bot.BotName}: Exception — {ex.Message}";
         }
@@ -191,8 +180,6 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     }
 
     internal static async Task<bool> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
-        // POST to broadcast heartbeat endpoint
-        // This tells Steam we are still watching, which is required for the watch-time to count toward drops
         Uri heartbeatUri = new("https://steamcommunity.com/broadcast/heartbeat/");
 
         Dictionary<string, string> data = new() {
@@ -208,10 +195,11 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         ).ConfigureAwait(false);
 
         if (response?.Content == null) {
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat returned null");
             return false;
         }
 
-        // "success" values: "ready" = still live, "waiting" = buffering/starting, anything else = ended
+        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat success={response.Content.Success}");
         return response.Content.Success == 1;
     }
 
