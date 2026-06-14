@@ -30,8 +30,8 @@ jobs:
 
       - name: Copy ASF dll next to csproj
         run: |
-          find /tmp/ASF -name "ArchiSteamFarm.dll" | head -1
-          cp $(find /tmp/ASF -name "ArchiSteamFarm.dll" | head -1) ASFBroadcastWatcher/ASFBroadcastWatcher/
+          mkdir -p ASFBroadcastWatcher/ASFBroadcastWatcher
+          cp /tmp/ASF/ArchiSteamFarm.dll ASFBroadcastWatcher/ASFBroadcastWatcher/
 
       - name: Build plugin
         run: |
