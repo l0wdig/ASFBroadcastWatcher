@@ -142,12 +142,19 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
         Uri mpdUri = new("https://steamcommunity.com/broadcast/getbroadcastmpd/");
 
+        // cellid tells Steam which CDN cell (region) we're in — without it the session
+        // is considered invalid almost immediately, causing "broadcast offline" errors.
+        uint cellId = bot.SteamClient?.CellID ?? 0;
+
         Dictionary<string, string> data = new() {
             { "steamid", broadcasterSteamId },
             { "broadcastid", broadcastId },
             { "viewertoken", viewerToken },
             { "appid", "0" },
             { "playerid", "0" },
+            { "cellid", cellId.ToString() },
+            { "langpref", "english" },
+            { "maxresolution", "1080" },
         };
 
         ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<BroadcastMpdResponse>(
@@ -218,8 +225,9 @@ internal sealed class WatchSession {
     private string _token;       // = viewertoken from getbroadcastmpd / heartbeat response
     private readonly CancellationTokenSource _cts = new();
 
-    // Steam expects heartbeats roughly every 30 seconds
-    private const int HeartbeatIntervalSeconds = 30;
+    // Steam expects heartbeats every ~20 seconds; 30s is sometimes too slow
+    // and causes the server to mark the session as stale
+    private const int HeartbeatIntervalSeconds = 20;
 
     internal WatchSession(Bot bot, string broadcasterSteamId, string sessionId, string token) {
         _bot = bot;
@@ -245,11 +253,18 @@ internal sealed class WatchSession {
                 ).ConfigureAwait(false);
 
                 if (heartbeat == null || heartbeat.Result != 1) {
-                    // Heartbeat failed — try to re-register before giving up
-                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (result={heartbeat?.Result}), attempting re-register...");
+                    // Heartbeat failed — reload watch page to refresh session cookies, then re-register
+                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (result={heartbeat?.Result}), reloading page and re-registering...");
+
+                    // Re-establish session cookies before calling getbroadcastmpd
+                    Uri watchUri = new($"https://steamcommunity.com/broadcast/watch/{BroadcasterSteamId}");
+                    await _bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(
+                        watchUri,
+                        referer: new Uri("https://steamcommunity.com/")
+                    ).ConfigureAwait(false);
 
                     BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdAsync(
-                        _bot, BroadcasterSteamId, _token, _sessionId
+                        _bot, BroadcasterSteamId, "0", "0"
                     ).ConfigureAwait(false);
 
                     if (mpd != null && mpd.Success == 1 && !string.IsNullOrEmpty(mpd.BroadcastId) && mpd.BroadcastId != "0") {
