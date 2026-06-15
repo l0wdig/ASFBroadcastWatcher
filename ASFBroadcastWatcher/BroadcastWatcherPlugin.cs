@@ -7,13 +7,14 @@ using System.Collections.Generic;
 using System.Composition;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Plugins.Interfaces;
 using ArchiSteamFarm.Steam;
-using ArchiSteamFarm.Web.Responses;
 
 namespace ASFBroadcastWatcher;
 
@@ -107,95 +108,114 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         }
 
         try {
-            // Step 1: Load the broadcast watch page — this sets the sessionid cookie that Steam
-            // requires as a query parameter in getbroadcastmpd (same as a real browser does)
-            Uri watchUri = new(originalUrl);
-            HtmlDocumentResponse? watchPage = await bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(
-                watchUri,
-                referer: new Uri("https://steamcommunity.com/")
-            ).ConfigureAwait(false);
+            // Get the HttpClient that already has Steam session cookies from ASF's web browser
+            HttpClient httpClient = bot.ArchiWebHandler.WebBrowser.GenerateDisposableHttpClient();
 
-            if (watchPage == null) {
-                return $"❌ {bot.BotName}: Failed to load broadcast page.";
-            }
+            // Step 1: Load the broadcast watch page so Steam sets our viewer cookies
+            string watchUrl = $"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}";
+            using HttpRequestMessage watchRequest = new(HttpMethod.Get, watchUrl);
+            watchRequest.Headers.Add("Referer", "https://steamcommunity.com/");
+            watchRequest.Headers.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            using HttpResponseMessage watchResponse = await httpClient.SendAsync(watchRequest).ConfigureAwait(false);
 
-            // Step 2: Call getbroadcastmpd (GET) with the sessionid cookie to register as a viewer
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Calling getbroadcastmpd for {broadcasterSteamId}...");
-            BroadcastMpdResponse? mpd = await GetBroadcastMpdAsync(bot, broadcasterSteamId).ConfigureAwait(false);
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Watch page loaded (status={watchResponse.StatusCode})");
+
+            // Step 2: Get the sessionid cookie — Steam needs this as a POST body param
+            CookieCollection cookies = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"));
+            string sessionId = cookies["sessionid"]?.Value ?? "";
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: sessionid={(string.IsNullOrEmpty(sessionId) ? "(empty)" : "found")}");
+
+            // Step 3: POST to getbroadcastmpd with steamid + sessionid
+            string mpdUrl = "https://steamcommunity.com/broadcast/getbroadcastmpd/";
+            Dictionary<string, string> mpdParams = new() {
+                { "steamid", broadcasterSteamId },
+                { "broadcastid", "0" },
+                { "viewertoken", "0" },
+                { "sessionid", sessionId },
+            };
+
+            using FormUrlEncodedContent mpdBody = new(mpdParams);
+            using HttpRequestMessage mpdRequest = new(HttpMethod.Post, mpdUrl);
+            mpdRequest.Headers.Add("Referer", watchUrl);
+            mpdRequest.Content = mpdBody;
+            using HttpResponseMessage mpdResponse = await httpClient.SendAsync(mpdRequest).ConfigureAwait(false);
+
+            string mpdJson = await mpdResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd response: {mpdJson}");
+
+            BroadcastMpdResponse? mpd = JsonSerializer.Deserialize<BroadcastMpdResponse>(mpdJson);
 
             if (mpd == null || mpd.Success == 0 || string.IsNullOrEmpty(mpd.BroadcastId) || mpd.BroadcastId == "0") {
-                bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd returned success={mpd?.Success} broadcastid={mpd?.BroadcastId}");
                 return $"❌ {bot.BotName}: Could not get broadcast session from Steam. Is the broadcast actually live?";
             }
 
             bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Got broadcastid={mpd.BroadcastId} viewertoken={mpd.ViewerToken}");
 
-            WatchSession session = new(bot, broadcasterSteamId, mpd.BroadcastId, mpd.ViewerToken);
-            ActiveSessions[bot.BotName] = session;
-            session.Start();
+            WatchSession watchSession = new(bot, broadcasterSteamId, mpd.BroadcastId, mpd.ViewerToken);
+            ActiveSessions[bot.BotName] = watchSession;
+            watchSession.Start();
 
             return $"✅ {bot.BotName}: Now watching broadcast by {broadcasterSteamId}. Heartbeating every 20s. Use BCASTSTOP {bot.BotName} to stop.";
         } catch (Exception ex) {
+            bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {bot.BotName}");
             return $"❌ {bot.BotName}: Exception — {ex.Message}";
         }
     }
 
-    // Calls the community endpoint to register as a viewer and get a session token.
-    // Steam expects a GET request. The sessionid cookie value must be passed as a query param —
-    // this is what the real Steam web player and Streamlink both do.
-    internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken = "0", string broadcastId = "0") {
-        // Read the sessionid that ASF's web handler holds for this bot's Steam session
-        string sessionId = bot.ArchiWebHandler.WebBrowser.CookieContainer
-            .GetCookies(new Uri("https://steamcommunity.com"))["sessionid"]?.Value ?? "";
+    internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdAsync(Bot bot, string broadcasterSteamId, string viewerToken, string broadcastId) {
+        try {
+            HttpClient httpClient = bot.ArchiWebHandler.WebBrowser.GenerateDisposableHttpClient();
 
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Using sessionid={sessionId} for getbroadcastmpd");
+            CookieCollection cookies = bot.ArchiWebHandler.WebBrowser.CookieContainer.GetCookies(new Uri("https://steamcommunity.com"));
+            string sessionId = cookies["sessionid"]?.Value ?? "";
 
-        Uri mpdUri = new(
-            $"https://steamcommunity.com/broadcast/getbroadcastmpd/" +
-            $"?steamid={Uri.EscapeDataString(broadcasterSteamId)}" +
-            $"&broadcastid={Uri.EscapeDataString(broadcastId)}" +
-            $"&viewertoken={Uri.EscapeDataString(viewerToken)}" +
-            $"&sessionid={Uri.EscapeDataString(sessionId)}"
-        );
+            string watchUrl = $"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}";
+            Dictionary<string, string> mpdParams = new() {
+                { "steamid", broadcasterSteamId },
+                { "broadcastid", broadcastId },
+                { "viewertoken", viewerToken },
+                { "sessionid", sessionId },
+            };
 
-        ObjectResponse<BroadcastMpdResponse>? response = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<BroadcastMpdResponse>(
-            mpdUri,
-            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}")
-        ).ConfigureAwait(false);
+            using FormUrlEncodedContent mpdBody = new(mpdParams);
+            using HttpRequestMessage mpdRequest = new(HttpMethod.Post, "https://steamcommunity.com/broadcast/getbroadcastmpd/");
+            mpdRequest.Headers.Add("Referer", watchUrl);
+            mpdRequest.Content = mpdBody;
+            using HttpResponseMessage mpdResponse = await httpClient.SendAsync(mpdRequest).ConfigureAwait(false);
 
-        if (response?.Content != null) {
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd: success={response.Content.Success} broadcastid={response.Content.BroadcastId} viewertoken={response.Content.ViewerToken}");
-        } else {
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] getbroadcastmpd returned null for {broadcasterSteamId}");
-        }
+            string mpdJson = await mpdResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd (re-register): {mpdJson}");
 
-        return response?.Content;
-    }
-
-    // Sends a heartbeat using the official Steam Web API endpoint
-    // GET https://api.steampowered.com/ISteamBroadcast/ViewerHeartbeat/v1/
-    internal static async Task<HeartbeatResponse?> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string sessionId, string token) {
-        Uri heartbeatUri = new(
-            $"https://api.steampowered.com/ISteamBroadcast/ViewerHeartbeat/v1/" +
-            $"?steamid={Uri.EscapeDataString(broadcasterSteamId)}" +
-            $"&sessionid={Uri.EscapeDataString(sessionId)}" +
-            $"&token={Uri.EscapeDataString(token)}" +
-            $"&stream=0"
-        );
-
-        ObjectResponse<HeartbeatResponse>? response = await bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<HeartbeatResponse>(
-            heartbeatUri,
-            referer: new Uri($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}"),
-            requestOptions: ArchiSteamFarm.Web.WebBrowser.ERequestOptions.ReturnClientErrors | ArchiSteamFarm.Web.WebBrowser.ERequestOptions.ReturnServerErrors
-        ).ConfigureAwait(false);
-
-        if (response?.Content == null) {
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat returned null");
+            return JsonSerializer.Deserialize<BroadcastMpdResponse>(mpdJson);
+        } catch (Exception ex) {
+            bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {bot.BotName} GetBroadcastMpdAsync");
             return null;
         }
+    }
 
-        bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat result={response.Content.Result} token={response.Content.Token}");
-        return response.Content;
+    internal static async Task<HeartbeatResponse?> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string sessionId, string token) {
+        try {
+            HttpClient httpClient = bot.ArchiWebHandler.WebBrowser.GenerateDisposableHttpClient();
+
+            string heartbeatUrl =
+                $"https://api.steampowered.com/ISteamBroadcast/ViewerHeartbeat/v1/" +
+                $"?steamid={Uri.EscapeDataString(broadcasterSteamId)}" +
+                $"&sessionid={Uri.EscapeDataString(sessionId)}" +
+                $"&token={Uri.EscapeDataString(token)}" +
+                $"&stream=0";
+
+            using HttpRequestMessage hbRequest = new(HttpMethod.Get, heartbeatUrl);
+            hbRequest.Headers.Add("Referer", $"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
+            using HttpResponseMessage hbResponse = await httpClient.SendAsync(hbRequest).ConfigureAwait(false);
+
+            string hbJson = await hbResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat response: {hbJson}");
+
+            return JsonSerializer.Deserialize<HeartbeatResponse>(hbJson);
+        } catch (Exception ex) {
+            bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {bot.BotName} SendHeartbeatAsync");
+            return null;
+        }
     }
 
     private static string? ExtractSteamIdFromUrl(string url) {
@@ -219,11 +239,10 @@ internal sealed class WatchSession {
     internal readonly DateTime StartedAt;
 
     private readonly Bot _bot;
-    private string _sessionId;   // = broadcastid from getbroadcastmpd
-    private string _token;       // = viewertoken from getbroadcastmpd / heartbeat response
+    private string _sessionId;
+    private string _token;
     private readonly CancellationTokenSource _cts = new();
 
-    // Steam marks viewer sessions stale after ~30s without a heartbeat; 20s is safe
     private const int HeartbeatIntervalSeconds = 20;
 
     internal WatchSession(Bot bot, string broadcasterSteamId, string sessionId, string token) {
@@ -250,14 +269,7 @@ internal sealed class WatchSession {
                 ).ConfigureAwait(false);
 
                 if (heartbeat == null || heartbeat.Result != 1) {
-                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (result={heartbeat?.Result}), reloading page and re-registering...");
-
-                    // Reload the watch page to refresh the sessionid cookie, then re-register
-                    Uri watchUri = new($"https://steamcommunity.com/broadcast/watch/{BroadcasterSteamId}");
-                    await _bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(
-                        watchUri,
-                        referer: new Uri("https://steamcommunity.com/")
-                    ).ConfigureAwait(false);
+                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (result={heartbeat?.Result}), re-registering...");
 
                     BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdAsync(
                         _bot, BroadcasterSteamId, "0", "0"
@@ -275,7 +287,6 @@ internal sealed class WatchSession {
                     break;
                 }
 
-                // Update token if Steam rotated it
                 if (!string.IsNullOrEmpty(heartbeat.Token) && heartbeat.Token != "0") {
                     _token = heartbeat.Token;
                 }
@@ -312,7 +323,6 @@ internal sealed class BroadcastMpdResponse {
 }
 
 internal sealed class HeartbeatResponse {
-    // ISteamBroadcast/ViewerHeartbeat/v1 returns "result" and "token"
     [JsonPropertyName("result")]
     public int Result { get; init; }
 
