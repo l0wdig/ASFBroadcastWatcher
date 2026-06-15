@@ -214,6 +214,12 @@ internal sealed class WatchSession {
         _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Loop started for {BroadcasterSteamId}. broadcastid={_broadcastId} token={_viewerToken}");
         int failures = 0;
 
+        // Stagger start: each bot waits a random 0-30s before first heartbeat
+        // so 50 bots don't all hit Steam at the exact same time
+        int staggerSeconds = Random.Shared.Next(0, 30);
+        _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Stagger delay {staggerSeconds}s before first heartbeat.");
+        await Task.Delay(TimeSpan.FromSeconds(staggerSeconds), ct).ConfigureAwait(false);
+
         try {
             while (!ct.IsCancellationRequested) {
                 await Task.Delay(TimeSpan.FromSeconds(HeartbeatIntervalSeconds), ct).ConfigureAwait(false);
