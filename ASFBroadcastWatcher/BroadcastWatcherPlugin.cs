@@ -99,7 +99,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
 
             bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: mpd success={mpd.Success} broadcastid={mpd.BroadcastId} viewertoken={mpd.ViewerToken}");
 
-            if (mpd.Success == 0) {
+            if (mpd.Success == "0") {
                 return $"❌ {bot.BotName}: Broadcast not available (success=0). Is {broadcasterSteamId} live?";
             }
 
@@ -234,7 +234,7 @@ internal sealed class WatchSession {
                 if (_broadcastId == "0" || string.IsNullOrEmpty(_broadcastId)) {
                     _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: No broadcastid yet, retrying getbroadcastmpd...");
                     BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdRawAsync(_bot, BroadcasterSteamId).ConfigureAwait(false);
-                    if (mpd != null && mpd.Success == 1 && mpd.BroadcastId != "0") {
+                    if (mpd != null && mpd.Success == "1" && mpd.BroadcastId != "0") {
                         _broadcastId = mpd.BroadcastId;
                         _viewerToken = mpd.ViewerToken;
                         _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Got broadcastid={_broadcastId}");
@@ -252,7 +252,7 @@ internal sealed class WatchSession {
 
                 HeartbeatResponse? hb = await BroadcastWatcherPlugin.SendHeartbeatAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
 
-                if (hb == null || hb.Success != 1) {
+                if (hb == null || hb.Success != "1") {
                     failures++;
                     _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (attempt {failures}/{MaxConsecutiveFailures}), success={hb?.Success}");
 
@@ -260,7 +260,7 @@ internal sealed class WatchSession {
                         // Last resort: try full reconnect via getbroadcastmpd
                         _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Attempting full reconnect...");
                         BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdRawAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
-                        if (mpd != null && mpd.Success == 1) {
+                        if (mpd != null && mpd.Success == "1") {
                             _broadcastId = mpd.BroadcastId;
                             _viewerToken = mpd.ViewerToken;
                             failures = 0;
@@ -293,7 +293,7 @@ internal sealed class WatchSession {
 
 internal sealed class BroadcastMpdResponse {
     [JsonPropertyName("success")]
-    public int Success { get; init; }
+    public string Success { get; init; } = "0";
 
     [JsonPropertyName("broadcastid")]
     public string BroadcastId { get; init; } = "0";
@@ -311,7 +311,7 @@ internal sealed class BroadcastMpdResponse {
 
 internal sealed class HeartbeatResponse {
     [JsonPropertyName("success")]
-    public int Success { get; init; }
+    public string Success { get; init; } = "0";
 
     [JsonPropertyName("viewertoken")]
     public string ViewerToken { get; init; } = "0";
