@@ -81,41 +81,32 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
             await existing.StopAsync().ConfigureAwait(false);
 
         try {
-            // Step 1: Hit the broadcast watch page to seed cookies
             Uri watchUri = new($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
             await bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(watchUri).ConfigureAwait(false);
 
-            // Step 2: Get sessionid cookie value from the bot's cookie jar
-            // ASF stores cookies; we read steamLoginSecure and sessionid
-            string? sessionCookie = await GetSessionIdAsync(bot).ConfigureAwait(false);
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: sessionid={sessionCookie ?? "null"}");
-
-            // Step 3: Call getbroadcastmpd via raw HTTP with full cookie header
             BroadcastMpdResponse? mpd = await GetBroadcastMpdRawAsync(bot, broadcasterSteamId).ConfigureAwait(false);
 
             if (mpd == null) {
-                return $"❌ {bot.BotName}: getbroadcastmpd returned null. Check logs.";
+                return $"❌ {bot.BotName}: getbroadcastmpd returned null. Check bot session.";
             }
 
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: mpd success={mpd.Success} broadcastid={mpd.BroadcastId} viewertoken={mpd.ViewerToken}");
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: mpd success={mpd.SuccessRaw} broadcastid={mpd.BroadcastId} viewertoken={mpd.ViewerToken}");
 
-            if (mpd.Success == "0") {
-                return $"❌ {bot.BotName}: Broadcast not available (success=0). Is {broadcasterSteamId} live?";
+            if (mpd.IsUnavailable) {
+                return $"❌ {bot.BotName}: Broadcast not available (success={mpd.SuccessRaw}). Is {broadcasterSteamId} live?";
             }
 
-            // success=2 means "waiting/loading" - still start the loop, it will retry
             WatchSession session = new(bot, broadcasterSteamId, mpd.BroadcastId, mpd.ViewerToken);
             ActiveSessions[bot.BotName] = session;
             session.Start();
 
-            return $"✅ {bot.BotName}: Watching {broadcasterSteamId} (mpd success={mpd.Success}). Use BCASTSTOP {bot.BotName} to stop.";
+            return $"✅ {bot.BotName}: Watching {broadcasterSteamId} (mpd success={mpd.SuccessRaw}). Use BCASTSTOP {bot.BotName} to stop.";
         } catch (Exception ex) {
             bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {bot.BotName}: StartWatchingAsync failed");
             return $"❌ {bot.BotName}: Exception — {ex.Message}";
         }
     }
 
-    // Use raw HTTP so we can inspect exactly what Steam returns
     internal static async Task<BroadcastMpdResponse?> GetBroadcastMpdRawAsync(Bot bot, string broadcasterSteamId, string broadcastId = "0", string viewerToken = "0") {
         Uri mpdUri = new("https://steamcommunity.com/broadcast/getbroadcastmpd/");
         Uri referer = new($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
@@ -135,11 +126,11 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
             ).ConfigureAwait(false);
 
             if (response?.Content != null) {
-                bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd response: success={response.Content.Success} broadcastid={response.Content.BroadcastId} token={response.Content.ViewerToken}");
+                bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd response: success={response.Content.SuccessRaw} broadcastid={response.Content.BroadcastId} token={response.Content.ViewerToken}");
                 return response.Content;
             }
 
-            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd response was null (HTTP error or deserialization failed)");
+            bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd response was null");
             return null;
         } catch (Exception ex) {
             bot.ArchiLogger.LogGenericException(ex, $"[BroadcastWatcher] {bot.BotName}: getbroadcastmpd threw exception");
@@ -147,7 +138,6 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
         }
     }
 
-    // Heartbeat: POST to steamcommunity.com/broadcast/heartbeat/ (the one that actually works with cookies)
     internal static async Task<HeartbeatResponse?> SendHeartbeatAsync(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
         Uri heartbeatUri = new("https://steamcommunity.com/broadcast/heartbeat/");
         Uri referer = new($"https://steamcommunity.com/broadcast/watch/{broadcasterSteamId}");
@@ -167,7 +157,7 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
             ).ConfigureAwait(false);
 
             if (response?.Content != null) {
-                bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat success={response.Content.Success} token={response.Content.ViewerToken}");
+                bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {bot.BotName}: Heartbeat success={response.Content.SuccessRaw} token={response.Content.ViewerToken}");
                 return response.Content;
             }
 
@@ -180,7 +170,6 @@ internal sealed class BroadcastWatcherPlugin : IPlugin, IBotCommand2 {
     }
 
     private static async Task<string?> GetSessionIdAsync(Bot bot) {
-        // Dummy GET to trigger session refresh and log cookies (debug only)
         try {
             Uri testUri = new("https://steamcommunity.com/broadcast/watch/");
             await bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(testUri).ConfigureAwait(false);
@@ -230,11 +219,10 @@ internal sealed class WatchSession {
                 await Task.Delay(TimeSpan.FromSeconds(HeartbeatIntervalSeconds), ct).ConfigureAwait(false);
                 if (ct.IsCancellationRequested) break;
 
-                // If we never got a real broadcastid (success=2 at start), try getbroadcastmpd again
                 if (_broadcastId == "0" || string.IsNullOrEmpty(_broadcastId)) {
                     _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: No broadcastid yet, retrying getbroadcastmpd...");
                     BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdRawAsync(_bot, BroadcasterSteamId).ConfigureAwait(false);
-                    if (mpd != null && mpd.Success == "1" && mpd.BroadcastId != "0") {
+                    if (mpd != null && mpd.IsReady && mpd.BroadcastId != "0") {
                         _broadcastId = mpd.BroadcastId;
                         _viewerToken = mpd.ViewerToken;
                         _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Got broadcastid={_broadcastId}");
@@ -252,15 +240,14 @@ internal sealed class WatchSession {
 
                 HeartbeatResponse? hb = await BroadcastWatcherPlugin.SendHeartbeatAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
 
-                if (hb == null || hb.Success != "1") {
+                if (hb == null || !hb.IsSuccess) {
                     failures++;
-                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (attempt {failures}/{MaxConsecutiveFailures}), success={hb?.Success}");
+                    _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Heartbeat failed (attempt {failures}/{MaxConsecutiveFailures}), success={hb?.SuccessRaw}");
 
                     if (failures >= MaxConsecutiveFailures) {
-                        // Last resort: try full reconnect via getbroadcastmpd
                         _bot.ArchiLogger.LogGenericInfo($"[BroadcastWatcher] {_bot.BotName}: Attempting full reconnect...");
                         BroadcastMpdResponse? mpd = await BroadcastWatcherPlugin.GetBroadcastMpdRawAsync(_bot, BroadcasterSteamId, _broadcastId, _viewerToken).ConfigureAwait(false);
-                        if (mpd != null && mpd.Success == "1") {
+                        if (mpd != null && mpd.IsReady) {
                             _broadcastId = mpd.BroadcastId;
                             _viewerToken = mpd.ViewerToken;
                             failures = 0;
@@ -292,8 +279,9 @@ internal sealed class WatchSession {
 }
 
 internal sealed class BroadcastMpdResponse {
+    // Steam sends success as a number OR a string like "ready" — use JsonElement to accept anything
     [JsonPropertyName("success")]
-    public string Success { get; init; } = "0";
+    public JsonElement Success { get; init; }
 
     [JsonPropertyName("broadcastid")]
     public string BroadcastId { get; init; } = "0";
@@ -304,15 +292,35 @@ internal sealed class BroadcastMpdResponse {
     [JsonPropertyName("url")]
     public string? Url { get; init; }
 
-    // Some responses include an error message
     [JsonPropertyName("errmsg")]
     public string? ErrMsg { get; init; }
+
+    // Raw value as string for logging
+    public string SuccessRaw => Success.ValueKind switch {
+        JsonValueKind.String => Success.GetString() ?? "",
+        JsonValueKind.Number => Success.GetRawText(),
+        _ => Success.GetRawText()
+    };
+
+    // "ready" or 1 both mean the broadcast is live and ready
+    public bool IsReady => SuccessRaw is "ready" or "1" or "2";
+
+    // 0 or "unavailable" etc. means not available
+    public bool IsUnavailable => SuccessRaw is "0" or "" or "unavailable";
 }
 
 internal sealed class HeartbeatResponse {
     [JsonPropertyName("success")]
-    public string Success { get; init; } = "0";
+    public JsonElement Success { get; init; }
 
     [JsonPropertyName("viewertoken")]
     public string ViewerToken { get; init; } = "0";
+
+    public string SuccessRaw => Success.ValueKind switch {
+        JsonValueKind.String => Success.GetString() ?? "",
+        JsonValueKind.Number => Success.GetRawText(),
+        _ => Success.GetRawText()
+    };
+
+    public bool IsSuccess => SuccessRaw is "1" or "ready";
 }
