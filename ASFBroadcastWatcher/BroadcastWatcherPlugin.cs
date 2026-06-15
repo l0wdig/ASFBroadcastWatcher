@@ -196,7 +196,7 @@ internal sealed class WatchSession {
     private string _broadcastId;
     private string _viewerToken;
     private readonly CancellationTokenSource _cts = new();
-    private const int HeartbeatIntervalSeconds = 30;
+    private const int HeartbeatIntervalSeconds = 55;
     private const int MaxConsecutiveFailures = 5;
 
     internal WatchSession(Bot bot, string broadcasterSteamId, string broadcastId, string viewerToken) {
