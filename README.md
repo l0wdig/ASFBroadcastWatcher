@@ -2,42 +2,6 @@
 
 An ASF (ArchiSteamFarm) plugin that watches Steam broadcasts on multiple accounts simultaneously.
 
-Designed for cases where game publishers give out free Steam items (backgrounds, emoticons, trading cards) as rewards for watching their broadcasts for a set duration.
-
----
-
-## How to get the DLL (no .NET SDK needed)
-
-1. Create a free account on [github.com](https://github.com) if you don't have one
-2. Click the **"+"** button (top right) → **"New repository"**
-3. Name it anything, e.g. `ASFBroadcastWatcher`, set it to **Public**, click **Create**
-4. Upload all files from this zip into the repository (drag & drop works on the GitHub website)
-5. After upload, go to the **Actions** tab → the build starts automatically
-6. Wait ~1-2 minutes, then go to the **Releases** section (right sidebar)
-7. Download `ASFBroadcastWatcher.zip` from the release
-
-That's it — GitHub compiles it for free every time you push.
-
----
-
-## Installation
-
-1. Extract the downloaded `ASFBroadcastWatcher.zip` into your ASF `plugins/` folder
-
-```
-ASF/
-└── plugins/
-    └── ASFBroadcastWatcher/
-        └── ASFBroadcastWatcher.dll
-```
-
-2. Restart ASF — you should see this in the log:
-```
-ASFBroadcastWatcher 1.0.0.0 loaded. Commands: BCAST <Bots> <BroadcastUrl> | BCASTSTOP <Bots> | BCASTLIST
-```
-
----
-
 ## Commands
 
 | Command | Access | Description |
